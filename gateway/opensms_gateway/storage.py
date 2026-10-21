@@ -14,7 +14,7 @@ VALID_STATES = NONTERMINAL_STATES | TERMINAL_STATES
 ALLOWED_TRANSITIONS = {
     "queued": {"waiting_device", "dispatching", "failed"},
     "waiting_device": {"dispatching", "failed"},
-    "dispatching": {"dispatching", "acknowledged", "failed"},
+    "dispatching": {"dispatching", "waiting_device", "acknowledged", "sent", "failed"},
     "acknowledged": {"dispatching", "sent", "failed"},
     "sent": set(),
     "failed": set(),
@@ -116,6 +116,44 @@ class GatewayStore:
                     return updated == 1
         return False
 
+    def pair_device(self, code: str, device_id: str, name: str, credential: str, now: Optional[float] = None) -> bool:
+        now = time.time() if now is None else float(now)
+        credential_hash = hash_secret(credential)
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if self._conn.execute("SELECT 1 FROM devices WHERE device_id=?", (device_id,)).fetchone():
+                    raise ValueError("device_exists")
+                rows = self._conn.execute(
+                    "SELECT id, code_hash FROM pairing_codes WHERE used_at IS NULL AND expires_at >= ? ORDER BY id DESC",
+                    (now,),
+                ).fetchall()
+                pairing_id = None
+                for row in rows:
+                    if verify_secret(code, row["code_hash"]):
+                        pairing_id = row["id"]
+                        break
+                if pairing_id is None:
+                    self._conn.execute("ROLLBACK")
+                    return False
+                updated = self._conn.execute(
+                    "UPDATE pairing_codes SET used_at=? WHERE id=? AND used_at IS NULL AND expires_at>=?",
+                    (now, pairing_id, now),
+                ).rowcount
+                if updated != 1:
+                    self._conn.execute("ROLLBACK")
+                    return False
+                self._conn.execute(
+                    "INSERT INTO devices(device_id, name, credential_hash, enabled, created_at, online) VALUES (?, ?, ?, 1, ?, 0)",
+                    (device_id, name, credential_hash, now),
+                )
+                self._conn.execute("COMMIT")
+                return True
+            except Exception:
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
+
     def create_device(self, device_id: str, name: str, credential: str, now: Optional[float] = None) -> dict:
         now = time.time() if now is None else float(now)
         encoded = hash_secret(credential)
@@ -152,9 +190,7 @@ class GatewayStore:
 
     def verify_device_credential(self, device_id: str, credential: str) -> bool:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT credential_hash, enabled FROM devices WHERE device_id=?", (device_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT credential_hash, enabled FROM devices WHERE device_id=?", (device_id,)).fetchone()
         return bool(row and row["enabled"] and verify_secret(credential, row["credential_hash"]))
 
     def revoke_device(self, device_id: str) -> None:
@@ -165,70 +201,57 @@ class GatewayStore:
         now = time.time() if now is None else float(now)
         with self._lock, self._conn:
             if online:
-                self._conn.execute(
-                    "UPDATE devices SET online=1, last_seen_at=? WHERE device_id=? AND enabled=1",
-                    (now, device_id),
-                )
+                self._conn.execute("UPDATE devices SET online=1, last_seen_at=? WHERE device_id=? AND enabled=1", (now, device_id))
             else:
                 self._conn.execute("UPDATE devices SET online=0 WHERE device_id=?", (device_id,))
 
     def touch_device(self, device_id: str, now: Optional[float] = None) -> None:
         now = time.time() if now is None else float(now)
         with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE devices SET last_seen_at=?, online=1 WHERE device_id=? AND enabled=1",
-                (now, device_id),
-            )
+            self._conn.execute("UPDATE devices SET last_seen_at=?, online=1 WHERE device_id=? AND enabled=1", (now, device_id))
 
-    def create_message(
-        self,
-        device_id: str,
-        to_number: str,
-        text: str,
-        idempotency_key: Optional[str] = None,
-        now: Optional[float] = None,
-    ) -> dict:
+    def create_message(self, device_id: str, to_number: str, text: str, idempotency_key: Optional[str] = None, now: Optional[float] = None) -> dict:
         now = time.time() if now is None else float(now)
         if idempotency_key:
             with self._lock:
-                existing = self._conn.execute(
-                    "SELECT * FROM messages WHERE idempotency_key=?", (idempotency_key,)
-                ).fetchone()
+                existing = self._conn.execute("SELECT * FROM messages WHERE idempotency_key=?", (idempotency_key,)).fetchone()
             if existing:
                 return dict(existing)
         message_id = f"msg_{uuid.uuid4().hex}"
         try:
             with self._lock, self._conn:
                 self._conn.execute(
-                    """INSERT INTO messages(
-                        message_id, device_id, to_number, text, state, idempotency_key,
-                        created_at, updated_at, dispatch_attempts
-                    ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 0)""",
+                    """INSERT INTO messages(message_id, device_id, to_number, text, state, idempotency_key,
+                       created_at, updated_at, dispatch_attempts) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, 0)""",
                     (message_id, device_id, to_number, text, idempotency_key, now, now),
                 )
         except sqlite3.IntegrityError:
             if idempotency_key:
                 with self._lock:
-                    existing = self._conn.execute(
-                        "SELECT * FROM messages WHERE idempotency_key=?", (idempotency_key,)
-                    ).fetchone()
+                    existing = self._conn.execute("SELECT * FROM messages WHERE idempotency_key=?", (idempotency_key,)).fetchone()
                 if existing:
                     return dict(existing)
             raise
         return self.get_message(message_id)
+
+    def get_message_by_idempotency(self, idempotency_key: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM messages WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+        return self._row(row)
+
+    def ready(self) -> bool:
+        try:
+            with self._lock:
+                return self._conn.execute("SELECT 1").fetchone()[0] == 1
+        except sqlite3.Error:
+            return False
 
     def get_message(self, message_id: str) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute("SELECT * FROM messages WHERE message_id=?", (message_id,)).fetchone()
         return self._row(row)
 
-    def transition_message(
-        self,
-        message_id: str,
-        new_state: str,
-        error_code: Optional[str] = None,
-        now: Optional[float] = None,
-    ) -> dict:
+    def transition_message(self, message_id: str, new_state: str, error_code: Optional[str] = None, now: Optional[float] = None) -> dict:
         if new_state not in VALID_STATES:
             raise ValueError("invalid message state")
         now = time.time() if now is None else float(now)
@@ -249,8 +272,7 @@ class GatewayStore:
             if new_state in TERMINAL_STATES:
                 completed_at = now
             self._conn.execute(
-                """UPDATE messages
-                   SET state=?, updated_at=?, acknowledged_at=?, completed_at=?, error_code=?, dispatch_attempts=?
+                """UPDATE messages SET state=?, updated_at=?, acknowledged_at=?, completed_at=?, error_code=?, dispatch_attempts=?
                    WHERE message_id=?""",
                 (new_state, now, acknowledged_at, completed_at, error_code, attempts, message_id),
             )
@@ -259,8 +281,7 @@ class GatewayStore:
     def list_dispatchable(self, device_id: str, limit: int = 100) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                """SELECT * FROM messages
-                   WHERE device_id=? AND state IN ('queued','waiting_device','dispatching','acknowledged')
+                """SELECT * FROM messages WHERE device_id=? AND state IN ('queued','waiting_device','dispatching','acknowledged')
                    ORDER BY created_at, message_id LIMIT ?""",
                 (device_id, int(limit)),
             ).fetchall()

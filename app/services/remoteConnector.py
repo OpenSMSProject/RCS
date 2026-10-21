@@ -11,15 +11,13 @@ import websocket
 from services.connectorConfig import load_connector_config
 from services.jobLedger import JobLedger
 
-
 MAX_NUMBER_CHARS = 64
 MAX_TEXT_CHARS = 4000
 PROTOCOL_VERSION = 1
+APP_VERSION = "0.1.0"
 
 
 class RemoteConnector:
-    """Outbound-only OpenSMS connector owned by the Android background service."""
-
     def __init__(self, config_dir: str, sms_sender: Optional[Callable[[str, str], bool]] = None):
         self.config_dir = config_dir
         if sms_sender is None:
@@ -59,36 +57,32 @@ class RemoteConnector:
     def _device_ws_url(self, gateway_url: str) -> str:
         raw = gateway_url.strip().rstrip("/")
         parsed = urlparse(raw)
+        allow_insecure = os.environ.get("OPENSMS_ALLOW_INSECURE_GATEWAY") == "1"
         if parsed.scheme in {"ws", "wss"}:
+            if parsed.scheme == "ws" and not allow_insecure:
+                raise ValueError("secure gateway transport required")
             if parsed.path and parsed.path != "/":
                 return raw
             return raw + "/api/v1/device/connect"
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("unsupported_gateway_scheme")
+        if parsed.scheme == "http" and not allow_insecure:
+            raise ValueError("secure gateway transport required")
         scheme = "wss" if parsed.scheme == "https" else "ws"
         path = parsed.path.rstrip("/") + "/api/v1/device/connect"
         return urlunparse((scheme, parsed.netloc, path, "", "", ""))
 
     def _send_hello(self):
         config = self._config()
-        self._send({
-            "type": "hello",
-            "protocol": PROTOCOL_VERSION,
-            "device_id": str(config.get("device_id", "")),
-            "credential": str(config.get("device_credential", "")),
-            "agent": "opensms-android",
-        })
+        self._send({"type": "hello", "protocol": PROTOCOL_VERSION, "device_id": str(config.get("device_id", "")),
+                    "credential": str(config.get("device_credential", "")), "agent": "opensms-android", "app_version": APP_VERSION})
 
     def _heartbeat_loop(self, device_id: str, interval: int):
         while not self._stop.wait(interval):
             if not self._authenticated:
                 continue
             try:
-                self._send({
-                    "type": "heartbeat",
-                    "device_id": device_id,
-                    "timestamp": int(time.time()),
-                })
+                self._send({"type": "heartbeat", "device_id": device_id, "timestamp": int(time.time())})
             except Exception:
                 return
 
@@ -96,60 +90,37 @@ class RemoteConnector:
         return str(self._config().get("device_id", "")).strip()
 
     def _job_result(self, job_id: str, state: str, error: Optional[str] = None) -> dict:
-        return {
-            "type": "job_result",
-            "job_id": job_id,
-            "device_id": self._device_id(),
-            "state": state,
-            "ok": state == "sent",
-            "error": error,
-        }
+        return {"type": "job_result", "job_id": job_id, "device_id": self._device_id(), "state": state,
+                "ok": state == "sent", "error": error}
 
     def _validate_job(self, message: dict) -> bool:
-        job_id = message.get("job_id")
-        number = message.get("number")
-        text = message.get("text")
-        return bool(
-            isinstance(job_id, str) and job_id.strip()
-            and isinstance(number, str) and 1 <= len(number) <= MAX_NUMBER_CHARS
-            and isinstance(text, str) and 1 <= len(text) <= MAX_TEXT_CHARS
-        )
+        job_id, number, text = message.get("job_id"), message.get("number"), message.get("text")
+        return bool(isinstance(job_id, str) and job_id.strip() and isinstance(number, str) and 1 <= len(number) <= MAX_NUMBER_CHARS
+                    and isinstance(text, str) and 1 <= len(text) <= MAX_TEXT_CHARS)
 
     def _handle_job(self, message: dict):
         job_id = str(message.get("job_id", ""))
         if not self._authenticated:
-            self._send(self._job_result(job_id, "failed", "not_authenticated"))
-            return
+            self._send(self._job_result(job_id, "failed", "not_authenticated")); return
         if message.get("command") != "send_sms":
-            self._send(self._job_result(job_id, "failed", "unsupported_command"))
-            return
+            self._send(self._job_result(job_id, "failed", "unsupported_command")); return
         if not self._validate_job(message):
-            self._send(self._job_result(job_id, "failed", "invalid_payload"))
-            return
-
+            self._send(self._job_result(job_id, "failed", "invalid_payload")); return
         prior = self.ledger.get(job_id)
         if prior:
             state = prior.get("state")
             if state in {"sent", "failed"} and isinstance(prior.get("result"), dict):
-                self._send(dict(prior["result"]))
-                return
+                self._send(dict(prior["result"])); return
             if state in {"accepted", "sending", "ambiguous"}:
                 self.ledger.mark(job_id, "ambiguous")
-                self._send(self._job_result(job_id, "failed", "duplicate_suppressed_uncertain"))
-                return
-
+                self._send(self._job_result(job_id, "failed", "duplicate_suppressed_uncertain")); return
         self.ledger.mark(job_id, "accepted")
         self._send({"type": "job_ack", "job_id": job_id, "device_id": self._device_id()})
         self.ledger.mark(job_id, "sending")
-
         try:
             ok = bool(self.sms_sender(message["number"], message["text"]))
-            if ok:
-                result = self._job_result(job_id, "sent", None)
-                self.ledger.mark(job_id, "sent", result)
-            else:
-                result = self._job_result(job_id, "failed", "sms_send_failed")
-                self.ledger.mark(job_id, "failed", result)
+            result = self._job_result(job_id, "sent", None) if ok else self._job_result(job_id, "failed", "sms_send_failed")
+            self.ledger.mark(job_id, "sent" if ok else "failed", result)
         except Exception:
             result = self._job_result(job_id, "failed", "sms_exception")
             self.ledger.mark(job_id, "failed", result)
@@ -159,12 +130,9 @@ class RemoteConnector:
     def _process_message(self, message: dict) -> bool:
         msg_type = message.get("type")
         if msg_type == "hello_ok":
-            self._authenticated = True
-            self.status = "online"
+            self._authenticated = True; self.status = "online"
         elif msg_type == "hello_error":
-            self._authenticated = False
-            self.status = "auth_failed"
-            raise ConnectionError("gateway_auth_failed")
+            self._authenticated = False; self.status = "auth_failed"; raise ConnectionError("gateway_auth_failed")
         elif msg_type == "ping":
             self._send({"type": "pong", "timestamp": int(time.time())})
         elif msg_type == "job":
@@ -176,27 +144,16 @@ class RemoteConnector:
             message = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
             return False
-        if not isinstance(message, dict):
-            return False
-        return self._process_message(message)
+        return isinstance(message, dict) and self._process_message(message)
 
     def _connect_once(self, config: dict):
         gateway_url = self._device_ws_url(str(config.get("gateway_url", "")))
         device_id = str(config.get("device_id", "")).strip()
         interval = max(10, int(config.get("heartbeat_seconds", 20)))
-
-        self.status = "connecting"
-        self._authenticated = False
+        self.status = "connecting"; self._authenticated = False
         self._ws = websocket.create_connection(gateway_url, timeout=30)
-        self._send_hello()
-        self.status = "authenticating"
-
-        threading.Thread(
-            target=self._heartbeat_loop,
-            args=(device_id, interval),
-            daemon=True,
-        ).start()
-
+        self._send_hello(); self.status = "authenticating"
+        threading.Thread(target=self._heartbeat_loop, args=(device_id, interval), daemon=True).start()
         while not self._stop.is_set():
             raw = self._ws.recv()
             if raw is None:
@@ -211,22 +168,14 @@ class RemoteConnector:
             device_id = str(config.get("device_id", "")).strip()
             credential = str(config.get("device_credential", "")).strip()
             if not config.get("enabled") or not gateway_url or not device_id or not credential:
-                self.status = "disabled"
-                self._stop.wait(10)
-                continue
-
+                self.status = "disabled"; self._stop.wait(10); continue
             try:
-                self._connect_once(config)
-                backoff = 2.0
+                self._connect_once(config); backoff = 2.0
             except Exception as exc:
-                self._authenticated = False
-                self.status = f"offline:{type(exc).__name__}"
+                self._authenticated = False; self.status = f"offline:{type(exc).__name__}"
                 if self._ws:
-                    try:
-                        self._ws.close()
-                    except Exception:
-                        pass
+                    try: self._ws.close()
+                    except Exception: pass
                 self._ws = None
                 delay = min(60.0, backoff) + random.uniform(0, 1.0)
-                self._stop.wait(delay)
-                backoff = min(60.0, backoff * 2)
+                self._stop.wait(delay); backoff = min(60.0, backoff * 2)
