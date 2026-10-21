@@ -56,6 +56,16 @@ def test_gateway_is_published_on_lan_port_8080():
     assert '"0.0.0.0:8080:8080"' in compose
 
 
+def test_installer_installs_rcs_management_command():
+    script = _script()
+    assert "/usr/local/bin/rcs" in script
+    for token in ("update)", "status)", "restart)", "logs)"):
+        assert token in script
+    assert "git fetch origin \"$BRANCH\"" in script
+    assert "git merge --ff-only \"origin/$BRANCH\"" in script
+    assert "docker compose up -d --build" in script
+
+
 def test_installer_starts_gateway_and_checks_health():
     script = _script()
     assert "docker compose up -d --build" in script
