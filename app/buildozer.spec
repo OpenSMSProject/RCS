@@ -32,14 +32,14 @@ requirements = python3,
     pydantic==2.12.3,
     idna,
     anyio,
-    starlette,
+    starlette==0.50.0,
     typing-extensions,
     typing-inspection,
     opentelemetry-api,
-    fastapi,
+    fastapi==0.128.2,
     click,
     h11,
-    uvicorn,
+    uvicorn==0.48.0,
     websocket-client==1.8.0
 
 icon.filename = %(source.dir)s/data/images/favicont512.png
