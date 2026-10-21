@@ -4,3 +4,4 @@ buildozer
 Cython==0.29.36
 fastapi
 uvicorn
+websocket-client
