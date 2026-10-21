@@ -1,6 +1,10 @@
 <p align="center"><img width="20%" src="app/data/images/favicont512.png" /></p>
 
-# 📨 OpenSMS
+# 📨 OpenSMS/RCS
+**OpenSMS/RCS** is the project name for the Android messaging gateway and its central Remote Gateway.
+
+The current v1 implements SMS end to end. RCS is the next channel integration and is not represented as complete until its own provider/device gates pass.
+
 An open-source solution to host a `SMS` API server locally, with an optional **Remote Gateway** that lets the Android phone work over Wi-Fi or mobile data without sharing the same LAN as the API client.
 
 ### Features
@@ -20,7 +24,7 @@ curl -X POST https://sms.example.com/api/v1/messages \
   -H "Authorization: Bearer $OPENSMS_API_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: example-1" \
-  -d '{"device_id":"osms-abcdef123456","to":"+5561999999999","text":"Hello from OpenSMS Remote Gateway"}'
+  -d '{"device_id":"osms-abcdef123456","to":"+5561999999999","text":"Hello from OpenSMS/RCS Remote Gateway"}'
 ```
 
 ## Local API
@@ -31,7 +35,7 @@ After installing the app and granting SMS permissions, start the local server an
 curl -i -X POST 'http://127.0.0.1:9292/sms/' \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer my-secret-api-key' \
-  -d '{"number":"+1234567890","text":"Hello from OpenSMS API!"}'
+  -d '{"number":"+1234567890","text":"Hello from OpenSMS/RCS API!"}'
 ```
 
 Do not expose port `9292` directly to the public Internet.
