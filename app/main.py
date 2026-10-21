@@ -199,7 +199,7 @@ class OpenSmsApp(MDApp):
                         if server_stat == "started":
                             if not self.api_started:
                                 self.api_started = True
-                                api_srv_lbl.text = f"API Server running on port: {self.req_template["port"]}"
+                                api_srv_lbl.text = f"API Server running on port: {self.req_template['port']}"
                                 api_srv_btn.btn_icon = "stop"
                                 api_srv_btn.btn_txt = "Stop Server"
                                 api_srv_btn.md_bg_color = "orange"
@@ -411,7 +411,7 @@ class OpenSmsApp(MDApp):
             if port_no >= 1025:
                 self.config_template["port"] = port_no
                 self.req_template["port"] = port_no
-        print(f"Service on start: {self.config_template["boot"]}, port: {self.config_template["port"]}")
+        print(f"Service on start: {self.config_template['boot']}, port: {self.config_template['port']}")
         Thread(target=self.write_app_conf, daemon=True).start()
         Clock.schedule_once(lambda dt: self.show_toast_msg("Settings has been saved."))
 

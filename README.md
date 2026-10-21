@@ -1,88 +1,65 @@
 <p align="center"><img width="20%" src="app/data/images/favicont512.png" /></p>
 
-# 📨 OpenSMS
-An open-source solution to host a `SMS` API server locally.
+# 📨 OpenSMS/RCS
+**OpenSMS/RCS** is the project name for the Android messaging gateway and its central Remote Gateway.
 
-### 🤔 Why would you choose our app? (Features)
-👉 Turns your `Android` phone into a SMS API server. <br>
-👉 Open-source, No advertisements and privacy focused.
+The current v1 implements SMS end to end. RCS is the next channel integration and is not represented as complete until its own provider/device gates pass.
 
-## 💰 Sponsor Me
-You can buy me a coffee via [this link](https://www.paypal.com/paypalme/soomnathsdas) or tap on below image. Thank you 🙏. <br>
-<a href="https://www.paypal.com/paypalme/soomnathsdas"><img src="./docs/images/donate.svg" height="40"></a>
+An open-source solution to host a `SMS` API server locally, with an optional **Remote Gateway** that lets the Android phone work over Wi-Fi or mobile data without sharing the same LAN as the API client.
 
-## 📽️ Demo
-You can click on the below Image or this [Youtube Link](https://www.youtube.com/watch?v=wNXH_3onjfg) to see the demo. Please let me know in the comments, how do you feel about this App. <br>
+### Features
+👉 Turns your Android phone into an SMS API server. <br>
+👉 Optional outbound-only Remote Connector: no public IP or inbound port on the phone. <br>
+👉 Durable remote queue, reconnect, per-device credentials, idempotency, and local `/sms/` fallback. <br>
+👉 Open-source, no advertisements and privacy focused.
 
-<a href="https://www.youtube.com/watch?v=wNXH_3onjfg"><img src="docs/images/OpenSmsThumb.webp" width="70%"></a>
+## 🌐 Remote Gateway v1
 
-## 🧑‍💻 Quickstart Guide
+The phone connects **outbound** to a central gateway over `wss://`/TCP 443. This works behind CGNAT and on unrelated Wi-Fi/4G/5G networks. The gateway is message-specific; it is not a general VPN or remote shell.
 
-### 📱 Download & Run the Android App
-1. You can check the [Releases](https://github.com/daslearning-org/OpenSMS/releases) and downlaod the latest version of the android app on your phone.
-2. You may need to disable (temporarily) `Play Protect` from your `Play Store` settings.
-3. Install the App & launch.
-4. Grant the permissions.
-5. Android might block `sms` permission. Go to `Settings` > `Apps` > `OpenSMS` > Tap on three vertical-dots at top-right corner > `Allow restricted access`.
-6. Then grant `SMS` permission from the settings window.
-7. Relaunch the app. 
-8. Click `Start Server`. It will then prompt you to generate an API Key for the first time. Generate and store it securely.
+See **[Remote Connector v1 operator guide](docs/remote-connector-v1.md)** for Docker deployment, TLS/reverse proxy, pairing, remote send/status, device revocation, queue semantics and the required physical-device acceptance test.
 
-### 🧪 Test API endpoint
-Find the network address of your device and you may test out the API. Sample given below.
+```bash
+curl -X POST https://sms.example.com/api/v1/messages \
+  -H "Authorization: Bearer $OPENSMS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: example-1" \
+  -d '{"device_id":"osms-abcdef123456","to":"+5561999999999","text":"Hello from OpenSMS/RCS Remote Gateway"}'
+```
+
+## Local API
+
+After installing the app and granting SMS permissions, start the local server and generate an API key.
 
 ```bash
 curl -i -X POST 'http://127.0.0.1:9292/sms/' \
-    -H 'Content-Type: application/json' \
-    -H 'Authorization: Bearer my-secret-api-key' \
-    -d '{"number": "+1234567890", "text": "Hello from OpenSMS API!"}'
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer my-secret-api-key' \
+  -d '{"number":"+1234567890","text":"Hello from OpenSMS/RCS API!"}'
 ```
 
-## 📚 Tech Stack Used
+Do not expose port `9292` directly to the public Internet.
 
-### Python stack
-It works on `Android` and will bring this to `Linux` & `Windows` too.
-- [FastAPI](https://github.com/fastapi/fastapi) for the API layer.
-- [KivyMD](https://github.com/kivymd/kivymd) and few [Kivy](https://github.com/kivy) components for the UI and building the app.
+## Tech stack
 
-### 📋 Future plans
+- FastAPI for local and gateway APIs
+- KivyMD/Kivy for Android UI
+- Android `SmsManager` through Pyjnius
+- SQLite durable gateway queue
+- WebSocket (`wss://`) outbound Android connector
 
-1. Bring this SMS API option to Desktop platforms. We will leverage [Quectel EC200U](https://www.quectel.com/product/lte-ec200u-series/) based USB development boards to send SMS.
+## Building Android
 
------
-
-## 🧩 Building your app from code
-
-### 📱 Build Android App
-A Linux environment is recommended for the app development. If you are on Windows, you may use `WSL` or any `Virtual Machine`.
+A Linux environment is recommended (WSL/VM also works):
 
 ```bash
-# add the python repository (Optional: if you want some other versions)
-sudo add-apt-repository ppa:deadsnakes/ppa
-sudo apt update
-
-# install all dependencies.
-sudo apt install -y ant autoconf automake ccache cmake g++ gcc lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch patchelf pkg-config unzip wget zip git python3 python3-venv python3-dev libcairo2-dev pkg-config libjpeg-dev zlib1g-dev
-
-# optionally you may check the java installation with below commands
-java -version
-javac -version
-
-# install python modules
-git clone https://github.com/daslearning-org/OpenSMS.git
+sudo apt install -y ant autoconf automake ccache cmake g++ gcc lbzip2 libffi-dev libltdl-dev libtool libssl-dev make openjdk-17-jdk patch patchelf pkg-config unzip wget zip git python3 python3-venv python3-dev libcairo2-dev libjpeg-dev zlib1g-dev
+git clone https://github.com/wesleiandersonti/OpenSMS.git
 cd OpenSMS/app
-python3 -m venv .env # create python virtual environment
+python3 -m venv .env
 source .env/bin/activate
 pip install -r req_android.txt
-
-# build the android apk
-buildozer android debug # this may take a good amount of time for the first time & will generate the apk in the bin directory
+buildozer android debug
 ```
 
------
-
-### Linux Dependencies for build
-```bash
-sudo apt install libcairo2-dev pkg-config python3-dev
-sudo apt-get install libjpeg-dev zlib1g-dev
-```
+GitHub Actions includes an **Android debug APK** workflow that uploads the generated APK as an artifact. Release signing is deliberately outside v1.
