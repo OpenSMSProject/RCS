@@ -56,9 +56,11 @@ def test_unsupported_command_returns_safe_failure(tmp_path):
     connector, sent = make_connector(tmp_path)
     connector._authenticated = True
     connector._process_message({'type': 'job', 'job_id': 'job-2', 'command': 'shell', 'number': '+5561999999999', 'text': 'x'})
-    assert sent[-1] == {
-        'type': 'job_result', 'job_id': 'job-2', 'state': 'failed', 'error': 'unsupported_command'
-    }
+    assert sent[-1]['type'] == 'job_result'
+    assert sent[-1]['job_id'] == 'job-2'
+    assert sent[-1]['state'] == 'failed'
+    assert sent[-1]['ok'] is False
+    assert sent[-1]['error'] == 'unsupported_command'
 
 
 def test_ack_happens_before_sms_sender_and_success_is_persisted(tmp_path):
@@ -127,3 +129,14 @@ def test_duplicate_uncertain_state_is_suppressed(tmp_path):
         assert calls == []
         assert sent[-1]['state'] == 'failed'
         assert sent[-1]['error'] == 'duplicate_suppressed_uncertain'
+
+
+def test_ack_and_result_include_device_identity_and_ok_flag(tmp_path):
+    connector, sent = make_connector(tmp_path)
+    connector._authenticated = True
+    connector._process_message({'type': 'job', 'job_id': 'job-8', 'command': 'send_sms', 'number': '+5561999999999', 'text': 'Teste'})
+    ack = sent[-2]
+    result = sent[-1]
+    assert ack['device_id'] == 'osms-abcdef123456'
+    assert result['device_id'] == 'osms-abcdef123456'
+    assert result['ok'] is True

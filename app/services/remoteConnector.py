@@ -92,11 +92,16 @@ class RemoteConnector:
             except Exception:
                 return
 
+    def _device_id(self) -> str:
+        return str(self._config().get("device_id", "")).strip()
+
     def _job_result(self, job_id: str, state: str, error: Optional[str] = None) -> dict:
         return {
             "type": "job_result",
             "job_id": job_id,
+            "device_id": self._device_id(),
             "state": state,
+            "ok": state == "sent",
             "error": error,
         }
 
@@ -134,7 +139,7 @@ class RemoteConnector:
                 return
 
         self.ledger.mark(job_id, "accepted")
-        self._send({"type": "job_ack", "job_id": job_id})
+        self._send({"type": "job_ack", "job_id": job_id, "device_id": self._device_id()})
         self.ledger.mark(job_id, "sending")
 
         try:
