@@ -10,6 +10,7 @@ import sys
 # local imports
 from services.postApi import PosiApiServer, set_config_path, set_api_os, set_api_logger
 from services.logSvc import LogService
+from services.remoteConnector import RemoteConnector
 
 # global vars
 app_name = "opensms"
@@ -43,6 +44,7 @@ resp_file = join(config_dir, "resp.json")
 
 ## global obj
 app_api_server = PosiApiServer()
+remote_connector = RemoteConnector(config_dir)
 
 ## functions
 def write_resp():
@@ -79,13 +81,12 @@ def api_server_control(api_stat: str):
 
 def app_service_thread():
     """
-    The main service thready runs forever till the app is running & performs the operations.
+    The main service thread runs forever till the app is running & performs the operations.
     """
-    #global vars
     global api_started
 
     write_resp() # blank the old file
-    #api_server_control("start") # api server starts automatically
+    remote_connector.start()
 
     # keep alive the service & check for requests
     while True:
