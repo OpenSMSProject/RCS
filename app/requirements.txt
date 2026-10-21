@@ -1,4 +1,5 @@
 fastapi
 uvicorn
+websocket-client
 https://github.com/kivymd/KivyMD/archive/master.zip # 2.0.1.dev0
 kivy[base]==2.3.1
