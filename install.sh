@@ -89,6 +89,81 @@ else
 fi
 chmod 600 "$ENV_FILE"
 
+log "Installing rcs management command"
+cat > /usr/local/bin/rcs <<'RCSCLI'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+INSTALL_DIR="/opt/opensms-rcs"
+GATEWAY_DIR="$INSTALL_DIR/gateway"
+DATA_DIR="$GATEWAY_DIR/data"
+BRANCH="feature/remote-connector-v1"
+HEALTH_URL="http://127.0.0.1:8080/healthz"
+READY_URL="http://127.0.0.1:8080/readyz"
+
+require_install() {
+  [[ -d "$INSTALL_DIR/.git" ]] || { echo "OpenSMS/RCS is not installed in $INSTALL_DIR" >&2; exit 1; }
+}
+
+wait_health() {
+  for _ in $(seq 1 30); do
+    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS "$READY_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+show_status() {
+  require_install
+  cd "$GATEWAY_DIR"
+  LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [[ -n "$LAN_IP" ]] || LAN_IP="127.0.0.1"
+  echo "RCS_BRANCH=$(git -C "$INSTALL_DIR" branch --show-current)"
+  echo "RCS_COMMIT=$(git -C "$INSTALL_DIR" rev-parse --short=12 HEAD)"
+  echo "DOCKER_STATUS=$(systemctl is-active docker || true)"
+  echo "GATEWAY_CONTAINER_STATUS=$(docker compose ps --status running -q opensms-gateway | grep -q . && echo running || echo stopped)"
+  if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then echo "HEALTHZ=PASS"; else echo "HEALTHZ=FAIL"; fi
+  if curl -fsS "$READY_URL" >/dev/null 2>&1; then echo "READYZ=PASS"; else echo "READYZ=FAIL"; fi
+  echo "LOCAL_ACCESS=http://${LAN_IP}:8080"
+}
+
+case "${1:-status}" in
+  update)
+    require_install
+    git -C "$INSTALL_DIR" fetch origin "$BRANCH"
+    git -C "$INSTALL_DIR" checkout "$BRANCH"
+    git -C "$INSTALL_DIR" merge --ff-only "origin/$BRANCH"
+    chown -R 10001:10001 "$DATA_DIR"
+    chmod 700 "$DATA_DIR"
+    cd "$GATEWAY_DIR"
+    docker compose up -d --build
+    wait_health || { docker compose ps; docker compose logs --tail=80; exit 1; }
+    show_status
+    ;;
+  status)
+    show_status
+    ;;
+  restart)
+    require_install
+    cd "$GATEWAY_DIR"
+    docker compose restart
+    wait_health || { docker compose ps; docker compose logs --tail=80; exit 1; }
+    show_status
+    ;;
+  logs)
+    require_install
+    cd "$GATEWAY_DIR"
+    docker compose logs --tail=200 -f
+    ;;
+  *)
+    echo "Usage: rcs {update|status|restart|logs}" >&2
+    exit 2
+    ;;
+esac
+RCSCLI
+chmod 755 /usr/local/bin/rcs
+
 cd "$GATEWAY_DIR"
 log "Building and starting gateway"
 docker compose up -d --build
@@ -132,5 +207,6 @@ printf 'LOCAL_ACCESS=http://%s:8080\n' "$LAN_IP"
 printf 'INSTALL_DIR=%s\n' "$INSTALL_DIR"
 printf 'CREDENTIALS_FILE=%s\n' "$ENV_FILE"
 printf 'TOKENS_PRINTED=NO\n'
+printf 'MANAGEMENT_COMMAND=rcs\n'
 printf 'FINAL_STATUS=PASS\n'
 printf '%s\n' '=========================================================='
