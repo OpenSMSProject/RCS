@@ -45,3 +45,25 @@ def test_installer_starts_gateway_and_checks_health():
     assert "http://127.0.0.1:8080/healthz" in script
     assert "http://127.0.0.1:8080/readyz" in script
     assert "FINAL_STATUS=PASS" in script
+
+
+def test_installer_reports_complete_final_status_only_after_validation():
+    script = _script()
+    required = (
+        "RCS_BRANCH=",
+        "RCS_COMMIT=",
+        "DOCKER_STATUS=",
+        "GATEWAY_CONTAINER_STATUS=",
+        "HEALTHZ=PASS",
+        "READYZ=PASS",
+        "INSTALL_DIR=",
+        "CREDENTIALS_FILE=",
+        "TOKENS_PRINTED=NO",
+        "FINAL_STATUS=PASS",
+    )
+    for token in required:
+        assert token in script
+
+    validation = script.index('if [[ "$health_ok" -ne 1 ]]')
+    final_status = script.index("FINAL_STATUS=PASS")
+    assert final_status > validation
