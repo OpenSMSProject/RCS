@@ -1,18 +1,16 @@
 from kivy.utils import platform
 
-from os.path import join, abspath, exists, dirname
+from os.path import join, exists
 from threading import Thread
 
 import json
 import time
-import sys
 
-# local imports
 from services.postApi import PosiApiServer, set_config_path, set_api_os, set_api_logger
 from services.logSvc import LogService
 from services.remoteConnector import RemoteConnector
+from services.smsApi import send_sms
 
-# global vars
 app_name = "opensms"
 resp_template = {
     "server": "none",
@@ -21,13 +19,9 @@ req_data = {}
 api_started = False
 log_obj = LogService(app_name, platform)
 
-## OS specific setups
-# for android
 if platform == "android":
     from android.storage import app_storage_path
-    from jnius import autoclass
     base_path = app_storage_path()
-#for other platforms like windows or linux
 else:
     from services.pathMgr import get_user_data_dir
     base_path = get_user_data_dir(app_name)
@@ -42,33 +36,30 @@ set_api_logger(log_obj)
 req_file = join(config_dir, "request.json")
 resp_file = join(config_dir, "resp.json")
 
-## global obj
 app_api_server = PosiApiServer()
-remote_connector = RemoteConnector(config_dir)
+remote_connector = RemoteConnector(config_dir, sms_sender=send_sms)
 
-## functions
+
 def write_resp():
-    """ Write the response json on file. """
     global resp_template
     with open(resp_file, "w") as rf:
         json.dump(resp_template, rf)
 
+
 def read_req_file():
-    """ Read the command file from file (Instrunctions from main app). """
     global req_data
     if exists(req_file):
         try:
             with open(req_file, "r") as rf:
                 req_data = json.load(rf)
         except Exception as e:
-            print(f"Error while reading config from svc: {e}")
+            print(f"Error while reading config from svc: {type(e).__name__}")
+
 
 def api_server_control(api_stat: str):
-    """ Turns API server on/off """
     global api_started
     global resp_template
     global req_data
-    print(req_data)
     if api_stat == "stop":
         app_api_server.stop()
         api_started = False
@@ -79,30 +70,22 @@ def api_server_control(api_stat: str):
         resp_template["server"] = "started"
     Thread(target=write_resp, daemon=True).start()
 
+
 def app_service_thread():
-    """
-    The main service thread runs forever till the app is running & performs the operations.
-    """
     global api_started
 
-    write_resp() # blank the old file
+    write_resp()
     remote_connector.start()
 
-    # keep alive the service & check for requests
     while True:
         read_req_file()
-
-        #handle api server
         server_stat = req_data.get("server", "")
         if not api_started and server_stat == "start":
             api_server_control("start")
         elif api_started and server_stat == "stop":
             api_server_control("stop")
-
-        # put a sleep
         time.sleep(0.2)
 
 
-# run locally
 if __name__ == "__main__":
     app_service_thread()
