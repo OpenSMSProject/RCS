@@ -67,6 +67,7 @@ fi
 [[ -f "$GATEWAY_DIR/.env.example" ]] || fail "gateway/.env.example not found"
 
 mkdir -p "$DATA_DIR"
+chown -R 10001:10001 "$DATA_DIR"
 chmod 700 "$DATA_DIR"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -108,9 +109,28 @@ if [[ "$health_ok" -ne 1 ]]; then
   fail "gateway did not become healthy"
 fi
 
+RCS_BRANCH="$(git -C "$INSTALL_DIR" branch --show-current)"
+RCS_COMMIT="$(git -C "$INSTALL_DIR" rev-parse --short=12 HEAD)"
+DOCKER_STATUS="$(systemctl is-active docker)"
+CONTAINER_ID="$(docker compose ps -q opensms-gateway)"
+[[ -n "$CONTAINER_ID" ]] || fail "gateway container id not found after health validation"
+GATEWAY_CONTAINER_STATUS="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID")"
+LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[[ -n "$LAN_IP" ]] || LAN_IP="127.0.0.1"
+
 printf '\n'
+printf '%s\n' '================ OpenSMS/RCS FINAL STATUS ================'
+printf 'RCS_BRANCH=%s\n' "$RCS_BRANCH"
+printf 'RCS_COMMIT=%s\n' "$RCS_COMMIT"
+printf 'DOCKER_STATUS=%s\n' "$DOCKER_STATUS"
+printf 'GATEWAY_CONTAINER_STATUS=%s\n' "$GATEWAY_CONTAINER_STATUS"
+printf 'HEALTHZ=PASS\n'
+printf 'READYZ=PASS\n'
+printf 'RCS_IP=%s\n' "$LAN_IP"
+printf 'RCS_PORT=8080\n'
+printf 'LOCAL_ACCESS=http://%s:8080\n' "$LAN_IP"
 printf 'INSTALL_DIR=%s\n' "$INSTALL_DIR"
-printf 'GATEWAY_URL=http://127.0.0.1:8080\n'
 printf 'CREDENTIALS_FILE=%s\n' "$ENV_FILE"
 printf 'TOKENS_PRINTED=NO\n'
 printf 'FINAL_STATUS=PASS\n'
+printf '%s\n' '=========================================================='
