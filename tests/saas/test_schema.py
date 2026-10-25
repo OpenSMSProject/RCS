@@ -12,7 +12,7 @@ def test_schema_defines_phase1_entities_and_enums():
         DocumentType,
         EmailVerificationToken,
         Membership,
-        OveragesPolicy,
+        OveragePolicy,
         Plan,
         SessionRecord,
         Tenant,
@@ -34,8 +34,8 @@ def test_schema_defines_phase1_entities_and_enums():
     assert TenantRole.Operator.value == "Operator"
     assert TenantStatus.active.value == "active"
     assert TenantStatus.suspended.value == "suspended"
-    assert OveragesPolicy.block.value == "block"
-    assert OveragesPolicy.bill.value == "bill"
+    assert OveragePolicy.block.value == "block"
+    assert OveragePolicy.bill.value == "bill"
     assert all(cls.__tablename__ in Base.metadata.tables for cls in [Tenant, User, Membership, Plan, TenantEntitlement, Trial, ApiKey, TenantDevice, AuditEvent, SessionRecord, EmailVerificationToken])
 
 
