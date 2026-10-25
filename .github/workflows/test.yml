@@ -1,0 +1,61 @@
+name: Python tests
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: opensms_test
+          POSTGRES_USER: opensms
+          POSTGRES_PASSWORD: opensms_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U opensms -d opensms_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      OPENSMS_SAAS_ENABLED: "0"
+      OPENSMS_SAAS_DATABASE_URL: postgresql+psycopg://opensms:opensms_ci@127.0.0.1:5432/opensms_test
+      OPENSMS_SAAS_SESSION_SECRET: ci-only-session-secret-with-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            app/requirements.txt
+            gateway/requirements.txt
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -r app/requirements.txt
+          python -m pip install -r gateway/requirements.txt
+      - name: Apply SaaS migrations
+        run: alembic -c gateway/opensms_gateway/saas/migrations/alembic.ini upgrade head
+      - name: Run tests
+        run: python -m pytest tests -q
+      - name: Compile Python sources
+        run: |
+          python -m py_compile app/main.py app/services/*.py app/screens/settings.py gateway/opensms_gateway/*.py gateway/opensms_gateway/saas/*.py gateway/run.py
+      - name: Whitespace check
+        run: git diff --check HEAD^ HEAD || git diff --check

@@ -1,0 +1,58 @@
+name: Android debug APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/android-debug-apk.yml"
+  push:
+    branches: ["main", "feature/**"]
+    paths:
+      - "app/**"
+      - ".github/workflows/android-debug-apk.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: app/req_android.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ant autoconf automake ccache cmake g++ gcc lbzip2 libffi-dev \
+            libltdl-dev libtool libssl-dev make patch patchelf pkg-config \
+            unzip wget zip git python3-dev libcairo2-dev libjpeg-dev zlib1g-dev
+      - name: Install Buildozer dependencies
+        working-directory: app
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r req_android.txt
+      - name: Build debug APK
+        working-directory: app
+        run: buildozer android debug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensms-debug-apk
+          path: app/bin/*.apk
+          if-no-files-found: error
+          retention-days: 14
