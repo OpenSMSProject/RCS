@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
     && chown -R 10001:10001 /app
 COPY opensms_gateway /app/opensms_gateway
 COPY run.py /app/run.py
+COPY start.sh /app/start.sh
+RUN chmod 755 /app/start.sh \
+    && chown -R 10001:10001 /app
 USER 10001:10001
 EXPOSE 8080
-CMD ["uvicorn", "run:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["/app/start.sh"]

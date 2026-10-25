@@ -1,10 +1,37 @@
 services:
+  opensms-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: opensms
+      POSTGRES_USER: opensms
+      POSTGRES_PASSWORD: ${OPENSMS_POSTGRES_PASSWORD:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$POSTGRES_PASSWORD" ]; then
+          echo "OpenSMS/RCS SaaS database credentials are not provisioned yet; leaving PostgreSQL uninitialized."
+          exec sleep infinity
+        fi
+        exec /usr/local/bin/docker-entrypoint.sh postgres
+    volumes:
+      - opensms-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -z \"$$POSTGRES_PASSWORD\" ]; then exit 0; else pg_isready -U opensms -d opensms; fi"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   opensms-gateway:
     build:
       context: .
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      opensms-postgres:
+        condition: service_healthy
     ports:
       - "0.0.0.0:8080:8080"
     volumes:
@@ -15,3 +42,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  opensms-postgres-data:
