@@ -1,4 +1,5 @@
 import asyncio
+import os
 import secrets
 from typing import Optional
 
@@ -50,6 +51,25 @@ def create_app(settings: Optional[GatewaySettings] = None, store: Optional[Gatew
     app.state.settings = settings
     app.state.store = store
     app.state.registry = registry
+    app.state.saas_enabled = False
+    app.state.saas_engine = None
+
+    from .saas.config import SaaSSettings
+
+    saas_settings = SaaSSettings.from_env()
+    if saas_settings.enabled:
+        from .saas.db import create_engine_from_settings, session_factory
+        from .saas.routes import build_saas_router
+
+        saas_engine = create_engine_from_settings(saas_settings)
+        saas_factory = session_factory(saas_engine)
+        secure_cookies = os.environ.get("OPENSMS_SAAS_SECURE_COOKIES", "1").strip().lower() not in {"0", "false", "no", "off"}
+        app.include_router(
+            build_saas_router(saas_factory, store, secure_cookies=secure_cookies),
+            prefix="/saas/v1",
+        )
+        app.state.saas_enabled = True
+        app.state.saas_engine = saas_engine
 
     def require_admin(authorization: Optional[str] = Header(default=None)) -> None:
         token = _bearer_value(authorization)
@@ -73,6 +93,11 @@ def create_app(settings: Optional[GatewaySettings] = None, store: Optional[Gatew
     def readyz():
         if not store.ready():
             raise HTTPException(status_code=503, detail="storage unavailable")
+        if app.state.saas_enabled:
+            from .saas.db import database_ready
+
+            if not database_ready(app.state.saas_engine):
+                raise HTTPException(status_code=503, detail="saas storage unavailable")
         return {"status": "ready"}
 
     @app.post("/api/v1/pairing-codes", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
