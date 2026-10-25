@@ -15,6 +15,7 @@ from .models import (
     TenantRole,
     TenantStatus,
     TenantType,
+    Trial,
     User,
 )
 from .security import hash_password, hash_session_token
@@ -58,6 +59,7 @@ def provision_trial_tenant(
     if session.scalar(select(User.id).where(func.lower(User.email) == normalized_email)) is not None:
         raise ValueError("email already registered")
 
+    now = datetime.now(timezone.utc)
     tenant = Tenant(
         tenant_type=tenant_type,
         document_type=document_type,
@@ -73,7 +75,10 @@ def provision_trial_tenant(
     )
     session.add_all([tenant, user])
     session.flush()
-    session.add(Membership(tenant_id=tenant.id, user_id=user.id, role=TenantRole.Owner))
+    session.add_all([
+        Membership(tenant_id=tenant.id, user_id=user.id, role=TenantRole.Owner),
+        Trial(tenant_id=tenant.id, document_number=normalized_document, starts_at=now, ends_at=now + timedelta(days=7)),
+    ])
     session.commit()
     session.refresh(tenant)
     return tenant
