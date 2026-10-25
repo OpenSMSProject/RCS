@@ -10,14 +10,8 @@ DATA_DIR="$GATEWAY_DIR/data"
 HEALTH_URL="http://127.0.0.1:8080/healthz"
 READY_URL="http://127.0.0.1:8080/readyz"
 
-log() {
-  printf '[OpenSMS/RCS] %s\n' "$*"
-}
-
-fail() {
-  printf '[OpenSMS/RCS] ERROR: %s\n' "$*" >&2
-  exit 1
-}
+log() { printf '[OpenSMS/RCS] %s\n' "$*"; }
+fail() { printf '[OpenSMS/RCS] ERROR: %s\n' "$*" >&2; exit 1; }
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   fail "run this installer as root (use sudo)"
@@ -39,7 +33,6 @@ apt-get install -y ca-certificates curl git openssl docker.io docker-compose-v2
 
 log "Enabling Docker"
 systemctl enable --now docker
-
 docker --version >/dev/null
 docker compose version >/dev/null
 
@@ -89,6 +82,46 @@ else
 fi
 chmod 600 "$ENV_FILE"
 
+ensure_env_value() {
+  local key="$1" value="$2"
+  if ! grep -q "^${key}=" "$ENV_FILE"; then
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+enable_saas="$(grep '^OPENSMS_SAAS_ENABLED=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+if [[ -z "$enable_saas" ]]; then
+  ensure_env_value OPENSMS_SAAS_ENABLED 1
+fi
+if ! grep -q '^OPENSMS_POSTGRES_PASSWORD=' "$ENV_FILE"; then
+  ensure_env_value OPENSMS_POSTGRES_PASSWORD "$(openssl rand -hex 24)"
+fi
+if ! grep -q '^OPENSMS_SAAS_SESSION_SECRET=' "$ENV_FILE"; then
+  ensure_env_value OPENSMS_SAAS_SESSION_SECRET "$(openssl rand -hex 32)"
+fi
+if ! grep -q '^OPENSMS_SAAS_DATABASE_URL=' "$ENV_FILE"; then
+  POSTGRES_PASSWORD="$(grep '^OPENSMS_POSTGRES_PASSWORD=' "$ENV_FILE" | tail -1 | cut -d= -f2-)"
+  [[ "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9]+$ ]] || fail "OPENSMS_POSTGRES_PASSWORD must be URL-safe when database URL is auto-generated"
+  ensure_env_value OPENSMS_SAAS_DATABASE_URL "postgresql+psycopg://opensms:${POSTGRES_PASSWORD}@opensms-postgres:5432/opensms"
+fi
+chmod 600 "$ENV_FILE"
+
+run_saas_migrations() {
+  cd "$GATEWAY_DIR"
+  log "Starting PostgreSQL and applying SaaS migrations"
+  docker compose up -d opensms-postgres
+  for _ in $(seq 1 30); do
+    if docker compose exec -T opensms-postgres pg_isready -U opensms -d opensms >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  docker compose exec -T opensms-postgres pg_isready -U opensms -d opensms >/dev/null 2>&1 \
+    || fail "PostgreSQL did not become ready"
+  docker compose build opensms-gateway
+  docker compose run --rm --no-deps opensms-gateway \
+    alembic -c /app/opensms_gateway/saas/migrations/alembic.ini upgrade head \
+    || fail "SaaS database migration failed; existing data was left intact"
+}
+
 log "Installing rcs management command"
 cat > /usr/local/bin/rcs <<'RCSCLI'
 #!/usr/bin/env bash
@@ -100,18 +133,26 @@ BRANCH="feature/remote-connector-v1"
 HEALTH_URL="http://127.0.0.1:8080/healthz"
 READY_URL="http://127.0.0.1:8080/readyz"
 
-require_install() {
-  [[ -d "$INSTALL_DIR/.git" ]] || { echo "OpenSMS/RCS is not installed in $INSTALL_DIR" >&2; exit 1; }
-}
+require_install() { [[ -d "$INSTALL_DIR/.git" ]] || { echo "OpenSMS/RCS is not installed in $INSTALL_DIR" >&2; exit 1; }; }
 
 wait_health() {
   for _ in $(seq 1 30); do
-    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS "$READY_URL" >/dev/null 2>&1; then
-      return 0
-    fi
+    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS "$READY_URL" >/dev/null 2>&1; then return 0; fi
     sleep 2
   done
   return 1
+}
+
+run_saas_migrations() {
+  cd "$GATEWAY_DIR"
+  docker compose up -d opensms-postgres
+  for _ in $(seq 1 30); do
+    if docker compose exec -T opensms-postgres pg_isready -U opensms -d opensms >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  docker compose exec -T opensms-postgres pg_isready -U opensms -d opensms >/dev/null 2>&1 || return 1
+  docker compose build opensms-gateway
+  docker compose run --rm --no-deps opensms-gateway alembic -c /app/opensms_gateway/saas/migrations/alembic.ini upgrade head
 }
 
 show_status() {
@@ -123,6 +164,7 @@ show_status() {
   echo "RCS_COMMIT=$(git -C "$INSTALL_DIR" rev-parse --short=12 HEAD)"
   echo "DOCKER_STATUS=$(systemctl is-active docker || true)"
   echo "GATEWAY_CONTAINER_STATUS=$(docker compose ps --status running -q opensms-gateway | grep -q . && echo running || echo stopped)"
+  echo "POSTGRES_CONTAINER_STATUS=$(docker compose ps --status running -q opensms-postgres | grep -q . && echo running || echo stopped)"
   if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then echo "HEALTHZ=PASS"; else echo "HEALTHZ=FAIL"; fi
   if curl -fsS "$READY_URL" >/dev/null 2>&1; then echo "READYZ=PASS"; else echo "READYZ=FAIL"; fi
   echo "LOCAL_ACCESS=http://${LAN_IP}:8080"
@@ -137,13 +179,12 @@ case "${1:-status}" in
     chown -R 10001:10001 "$DATA_DIR"
     chmod 700 "$DATA_DIR"
     cd "$GATEWAY_DIR"
+    run_saas_migrations || { echo "SaaS migration failed; update stopped before readiness" >&2; exit 1; }
     docker compose up -d --build
     wait_health || { docker compose ps; docker compose logs --tail=80; exit 1; }
     show_status
     ;;
-  status)
-    show_status
-    ;;
+  status) show_status ;;
   restart)
     require_install
     cd "$GATEWAY_DIR"
@@ -156,25 +197,20 @@ case "${1:-status}" in
     cd "$GATEWAY_DIR"
     docker compose logs --tail=200 -f
     ;;
-  *)
-    echo "Usage: rcs {update|status|restart|logs}" >&2
-    exit 2
-    ;;
+  *) echo "Usage: rcs {update|status|restart|logs}" >&2; exit 2 ;;
 esac
 RCSCLI
 chmod 755 /usr/local/bin/rcs
 
 cd "$GATEWAY_DIR"
+run_saas_migrations
 log "Building and starting gateway"
 docker compose up -d --build
 
 log "Waiting for health checks"
 health_ok=0
 for _ in $(seq 1 30); do
-  if curl -fsS "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS "$READY_URL" >/dev/null 2>&1; then
-    health_ok=1
-    break
-  fi
+  if curl -fsS "$HEALTH_URL" >/dev/null 2>&1 && curl -fsS "$READY_URL" >/dev/null 2>&1; then health_ok=1; break; fi
   sleep 2
 done
 
@@ -190,6 +226,7 @@ DOCKER_STATUS="$(systemctl is-active docker)"
 CONTAINER_ID="$(docker compose ps -q opensms-gateway)"
 [[ -n "$CONTAINER_ID" ]] || fail "gateway container id not found after health validation"
 GATEWAY_CONTAINER_STATUS="$(docker inspect -f '{{.State.Status}}' "$CONTAINER_ID")"
+POSTGRES_CONTAINER_STATUS="$(docker compose ps --status running -q opensms-postgres | grep -q . && echo running || echo stopped)"
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [[ -n "$LAN_IP" ]] || LAN_IP="127.0.0.1"
 
@@ -199,6 +236,7 @@ printf 'RCS_BRANCH=%s\n' "$RCS_BRANCH"
 printf 'RCS_COMMIT=%s\n' "$RCS_COMMIT"
 printf 'DOCKER_STATUS=%s\n' "$DOCKER_STATUS"
 printf 'GATEWAY_CONTAINER_STATUS=%s\n' "$GATEWAY_CONTAINER_STATUS"
+printf 'POSTGRES_CONTAINER_STATUS=%s\n' "$POSTGRES_CONTAINER_STATUS"
 printf 'HEALTHZ=PASS\n'
 printf 'READYZ=PASS\n'
 printf 'RCS_IP=%s\n' "$LAN_IP"
