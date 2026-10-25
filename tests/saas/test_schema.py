@@ -61,7 +61,7 @@ def test_membership_api_key_token_and_device_uniqueness():
         user = User(email="owner@example.com", password_hash="hash", is_super_admin=False)
         session.add_all([tenant, user]); session.flush()
         session.add(Membership(tenant_id=tenant.id, user_id=user.id, role=TenantRole.Owner))
-        session.add(ApiKey(tenant_id=tenant.id, label="main", key_hash="keyhash"))
+        session.add(ApiKey(tenant_id=tenant.id, label="main", key_hash="keyhash", key_prefix="osms_live_test"))
         session.add(TenantDevice(tenant_id=tenant.id, device_id="device-1"))
         session.add(EmailVerificationToken(user_id=user.id, token_hash="verifyhash", expires_at=now + timedelta(hours=1)))
         session.commit()
