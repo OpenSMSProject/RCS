@@ -5,7 +5,10 @@ Revises: None
 """
 from alembic import op
 
-from gateway.opensms_gateway.saas.models import Base
+try:
+    from gateway.opensms_gateway.saas.models import Base
+except ModuleNotFoundError:
+    from opensms_gateway.saas.models import Base
 
 revision = "0001_saas_foundation"
 down_revision = None
