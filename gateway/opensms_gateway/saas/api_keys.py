@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from .auth import Principal
 from .entitlements import evaluate_entitlement
-from .models import ApiKey, Tenant, TenantRole, TenantStatus
+from .models import ApiKey, AuditEvent, Tenant, TenantRole, TenantStatus
 
 
 def _hash_api_key(raw_key: str) -> str:
@@ -20,6 +20,20 @@ def _require_key_manager(actor: Principal, tenant_id: UUID) -> None:
         raise PermissionError("forbidden")
     if actor.role not in {TenantRole.Owner, TenantRole.Admin}:
         raise PermissionError("forbidden")
+
+
+def _audit_key(session, *, actor: Principal, record: ApiKey, action: str) -> None:
+    session.add(
+        AuditEvent(
+            actor_user_id=actor.user_id,
+            tenant_id=record.tenant_id,
+            action=action,
+            target_type="api_key",
+            target_id=str(record.id),
+            metadata_json={"label": record.label},
+        )
+    )
+    session.commit()
 
 
 def create_api_key(session, *, tenant_id: UUID, actor: Principal, label: str) -> tuple[ApiKey, str]:
@@ -35,6 +49,7 @@ def create_api_key(session, *, tenant_id: UUID, actor: Principal, label: str) ->
     session.add(record)
     session.commit()
     session.refresh(record)
+    _audit_key(session, actor=actor, record=record, action="api_key.create")
     return record, raw_key
 
 
@@ -64,3 +79,4 @@ def revoke_api_key(session, *, key_id: UUID, actor: Principal) -> None:
     _require_key_manager(actor, record.tenant_id)
     record.revoked_at = datetime.now(timezone.utc)
     session.commit()
+    _audit_key(session, actor=actor, record=record, action="api_key.revoke")
