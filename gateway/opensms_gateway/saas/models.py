@@ -48,6 +48,7 @@ class Tenant(Base):
     document_type: Mapped[DocumentType] = mapped_column(Enum(DocumentType, name="document_type"), nullable=False)
     document_number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plan_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("plans.id", ondelete="SET NULL"), index=True)
     status: Mapped[TenantStatus] = mapped_column(Enum(TenantStatus, name="tenant_status"), nullable=False, default=TenantStatus.active)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     __table_args__ = (Index("ix_tenants_document_number", "document_number", unique=True),)
