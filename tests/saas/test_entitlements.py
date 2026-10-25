@@ -79,6 +79,34 @@ def test_pf_and_pj_plan_catalogs_cannot_cross_assign_and_plan_overrides_trial():
     assert evaluate_entitlement(session, tenant_id=tenant.id, capability="bulk_campaigns", now=now + timedelta(days=30)).allowed is True
 
 
+def test_courtesy_overrides_replace_active_trial_limits_and_booleans():
+    session = db(); tenant = make_pf(session); now = datetime.now(timezone.utc)
+    session.add(TenantDevice(tenant_id=tenant.id, device_id="dev-1"))
+    session.add(TenantEntitlement(
+        tenant_id=tenant.id,
+        plan_id=None,
+        courtesy_overrides={"devices": 3, "external_api": False, "bulk_campaigns": True},
+    ))
+    session.commit()
+
+    devices = evaluate_entitlement(session, tenant_id=tenant.id, capability="devices", now=now)
+    assert devices == EntitlementDecision(True, None, 3, 1)
+    external_api = evaluate_entitlement(session, tenant_id=tenant.id, capability="external_api", now=now)
+    assert external_api.allowed is False and external_api.reason == "not_entitled"
+    bulk = evaluate_entitlement(session, tenant_id=tenant.id, capability="bulk_campaigns", now=now)
+    assert bulk.allowed is True and bulk.reason is None
+
+
+def test_courtesy_override_does_not_reactivate_an_expired_trial():
+    session = db(); tenant = make_pf(session); now = datetime.now(timezone.utc)
+    trial = session.scalar(select(Trial).where(Trial.tenant_id == tenant.id))
+    trial.expires_at = now
+    session.add(TenantEntitlement(tenant_id=tenant.id, plan_id=None, courtesy_overrides={"devices": 5}))
+    session.commit()
+    decision = evaluate_entitlement(session, tenant_id=tenant.id, capability="devices", now=now)
+    assert decision.allowed is False and decision.reason == "trial_expired"
+
+
 def test_unknown_capability_is_rejected_in_one_place():
     session = db(); tenant = make_pf(session)
     with pytest.raises(ValueError, match="capability"):

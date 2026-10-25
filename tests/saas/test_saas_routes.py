@@ -73,6 +73,9 @@ def test_signup_login_session_cookie_me_and_logout_csrf():
     assert client.post("/saas/v1/logout").status_code == 403
     logged_out = client.post("/saas/v1/logout", headers={"X-CSRF-Token": csrf})
     assert logged_out.status_code == 204
+    set_cookie = logged_out.headers.get("set-cookie", "").lower()
+    assert "opensms_session=" in set_cookie
+    assert "max-age=0" in set_cookie or "expires=" in set_cookie
     assert client.get("/saas/v1/me").status_code == 401
 
 
