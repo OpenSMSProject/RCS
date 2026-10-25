@@ -18,7 +18,7 @@ def settings():
 def test_saas_disabled_keeps_legacy_gateway_ready_and_routes_working(monkeypatch):
     monkeypatch.setenv("OPENSMS_SAAS_ENABLED", "0")
     store = GatewayStore(":memory:")
-    store.create_device("dev-legacy", "Legacy Phone", "secret")
+    store.create_device("osms-legacy1", "Legacy Phone", "secret")
     app = create_app(settings=settings(), store=store, registry=ConnectionRegistry())
     client = TestClient(app)
 
@@ -26,7 +26,7 @@ def test_saas_disabled_keeps_legacy_gateway_ready_and_routes_working(monkeypatch
     assert client.get("/readyz").status_code == 200
     devices = client.get("/api/v1/devices", headers={"Authorization": "Bearer admin-token"})
     assert devices.status_code == 200
-    assert devices.json()["devices"][0]["device_id"] == "dev-legacy"
+    assert devices.json()["devices"][0]["device_id"] == "osms-legacy1"
     assert client.get("/saas/v1/me").status_code == 404
 
 
@@ -37,8 +37,8 @@ def test_saas_database_outage_degrades_ready_without_corrupting_legacy_sqlite(mo
     monkeypatch.setenv("OPENSMS_SAAS_SECURE_COOKIES", "0")
 
     store = GatewayStore(":memory:")
-    store.create_device("dev-legacy", "Legacy Phone", "secret")
-    before = store.get_device("dev-legacy")
+    store.create_device("osms-legacy1", "Legacy Phone", "secret")
+    before = store.get_device("osms-legacy1")
     app = create_app(settings=settings(), store=store, registry=ConnectionRegistry())
     client = TestClient(app)
 
@@ -48,7 +48,7 @@ def test_saas_database_outage_degrades_ready_without_corrupting_legacy_sqlite(mo
     assert ready.json()["detail"] == "saas storage unavailable"
     devices = client.get("/api/v1/devices", headers={"Authorization": "Bearer admin-token"})
     assert devices.status_code == 200
-    assert store.get_device("dev-legacy") == before
+    assert store.get_device("osms-legacy1") == before
     assert client.get("/saas/v1/me").status_code == 401
 
 
@@ -59,21 +59,21 @@ def test_saas_enabled_does_not_change_legacy_message_contract(monkeypatch):
     monkeypatch.setenv("OPENSMS_SAAS_SECURE_COOKIES", "0")
 
     store = GatewayStore(":memory:")
-    store.create_device("dev-legacy", "Legacy Phone", "secret")
+    store.create_device("osms-legacy1", "Legacy Phone", "secret")
     app = create_app(settings=settings(), store=store, registry=ConnectionRegistry())
     client = TestClient(app)
 
     response = client.post(
         "/api/v1/messages",
         headers={"Authorization": "Bearer api-token", "Idempotency-Key": "compat-1"},
-        json={"device_id": "dev-legacy", "to": "+5511999999999", "text": "compat"},
+        json={"device_id": "osms-legacy1", "to": "+5511999999999", "text": "compat"},
     )
     assert response.status_code == 202
     assert response.json()["state"] == "waiting_device"
     repeated = client.post(
         "/api/v1/messages",
         headers={"Authorization": "Bearer api-token", "Idempotency-Key": "compat-1"},
-        json={"device_id": "dev-legacy", "to": "+5511999999999", "text": "compat"},
+        json={"device_id": "osms-legacy1", "to": "+5511999999999", "text": "compat"},
     )
     assert repeated.status_code == 202
     assert repeated.json()["message_id"] == response.json()["message_id"]

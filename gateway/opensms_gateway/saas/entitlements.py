@@ -27,6 +27,8 @@ class EntitlementDecision:
 
 
 _CAPABILITIES = frozenset({"users", "devices", "api_keys", "external_api", "bulk_campaigns"})
+_LIMIT_CAPABILITIES = frozenset({"users", "devices", "api_keys"})
+_BOOLEAN_CAPABILITIES = frozenset({"external_api", "bulk_campaigns"})
 
 
 def _aware(value: datetime) -> datetime:
@@ -44,10 +46,17 @@ def validate_plan_assignment(session: Session, *, tenant_id: UUID, plan_id: UUID
         raise ValueError("plan tenant type mismatch")
 
 
-def _active_plan(session: Session, tenant: Tenant) -> Optional[Plan]:
-    entitlement = session.scalar(
-        select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant.id)
+def _entitlement_record(session: Session, tenant_id: UUID) -> Optional[TenantEntitlement]:
+    return session.scalar(
+        select(TenantEntitlement).where(TenantEntitlement.tenant_id == tenant_id)
     )
+
+
+def _active_plan(
+    session: Session,
+    tenant: Tenant,
+    entitlement: Optional[TenantEntitlement],
+) -> Optional[Plan]:
     if entitlement is None or entitlement.plan_id is None:
         return None
     plan = session.get(Plan, entitlement.plan_id)
@@ -84,6 +93,34 @@ def _limit_decision(session: Session, tenant_id: UUID, capability: str, limit: i
     return EntitlementDecision(True, None, int(limit), used)
 
 
+def _limit_with_override(
+    entitlement: Optional[TenantEntitlement],
+    capability: str,
+    default: int,
+) -> int:
+    if entitlement is None:
+        return int(default)
+    value = (entitlement.courtesy_overrides or {}).get(capability)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return int(default)
+    return value
+
+
+def _boolean_with_override(
+    entitlement: Optional[TenantEntitlement],
+    capability: str,
+    default: bool,
+) -> bool:
+    if entitlement is None:
+        return bool(default)
+    value = (entitlement.courtesy_overrides or {}).get(capability)
+    return value if isinstance(value, bool) else bool(default)
+
+
+def _boolean_decision(value: bool) -> EntitlementDecision:
+    return EntitlementDecision(value, None if value else "not_entitled", None, None)
+
+
 def evaluate_entitlement(
     session: Session,
     *,
@@ -98,17 +135,21 @@ def evaluate_entitlement(
     if tenant is None or tenant.status != TenantStatus.active:
         return EntitlementDecision(False, "tenant_unavailable", None, None)
 
-    plan = _active_plan(session, tenant)
+    entitlement = _entitlement_record(session, tenant_id)
+    plan = _active_plan(session, tenant, entitlement)
     if plan is not None:
         if capability == "users":
-            return _limit_decision(session, tenant_id, capability, plan.max_users)
+            limit = _limit_with_override(entitlement, capability, plan.max_users)
+            return _limit_decision(session, tenant_id, capability, limit)
         if capability == "devices":
-            return _limit_decision(session, tenant_id, capability, plan.max_devices)
+            limit = _limit_with_override(entitlement, capability, plan.max_devices)
+            return _limit_decision(session, tenant_id, capability, limit)
         if capability == "api_keys":
-            return _limit_decision(session, tenant_id, capability, plan.max_api_keys)
+            limit = _limit_with_override(entitlement, capability, plan.max_api_keys)
+            return _limit_decision(session, tenant_id, capability, limit)
         if capability == "external_api":
-            return EntitlementDecision(bool(plan.external_api), None if plan.external_api else "not_entitled", None, None)
-        return EntitlementDecision(bool(plan.bulk_campaigns), None if plan.bulk_campaigns else "not_entitled", None, None)
+            return _boolean_decision(_boolean_with_override(entitlement, capability, plan.external_api))
+        return _boolean_decision(_boolean_with_override(entitlement, capability, plan.bulk_campaigns))
 
     trial = _active_trial(session, tenant_id)
     if trial is None:
@@ -117,11 +158,14 @@ def evaluate_entitlement(
         return EntitlementDecision(False, "trial_expired", None, None)
 
     if capability == "users":
-        return _limit_decision(session, tenant_id, capability, trial.max_users)
+        limit = _limit_with_override(entitlement, capability, trial.max_users)
+        return _limit_decision(session, tenant_id, capability, limit)
     if capability == "devices":
-        return _limit_decision(session, tenant_id, capability, trial.max_devices)
+        limit = _limit_with_override(entitlement, capability, trial.max_devices)
+        return _limit_decision(session, tenant_id, capability, limit)
     if capability == "api_keys":
-        return _limit_decision(session, tenant_id, capability, trial.max_api_keys)
+        limit = _limit_with_override(entitlement, capability, trial.max_api_keys)
+        return _limit_decision(session, tenant_id, capability, limit)
     if capability == "external_api":
-        return EntitlementDecision(bool(trial.external_api), None if trial.external_api else "not_entitled", None, None)
-    return EntitlementDecision(bool(trial.bulk_campaigns), None if trial.bulk_campaigns else "not_entitled", None, None)
+        return _boolean_decision(_boolean_with_override(entitlement, capability, trial.external_api))
+    return _boolean_decision(_boolean_with_override(entitlement, capability, trial.bulk_campaigns))

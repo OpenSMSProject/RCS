@@ -149,8 +149,15 @@ def build_saas_router(session_factory, gateway_store, *, secure_cookies: bool = 
         if record is not None:
             record.revoked_at = datetime.now(timezone.utc)
             session.commit()
-        response.delete_cookie(SESSION_COOKIE, path="/")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(
+            SESSION_COOKIE,
+            path="/",
+            secure=secure_cookies,
+            httponly=True,
+            samesite="strict",
+        )
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
 
     @router.get("/me")
     def me(principal: Principal = Depends(principal_from_request)):
