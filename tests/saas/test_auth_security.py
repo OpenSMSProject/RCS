@@ -1,6 +1,7 @@
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -65,10 +66,11 @@ def test_session_authentication_respects_expiry_revocation_and_suspension():
 
 
 def test_role_guards_are_explicit_and_super_admin_is_separate():
-    owner = Principal(user_id=None, tenant_id=None, role=TenantRole.Owner, is_super_admin=False)
-    admin = Principal(user_id=None, tenant_id=None, role=TenantRole.Admin, is_super_admin=False)
-    operator = Principal(user_id=None, tenant_id=None, role=TenantRole.Operator, is_super_admin=False)
-    super_admin = Principal(user_id=None, tenant_id=None, role=None, is_super_admin=True)
+    tenant_id = uuid4()
+    owner = Principal(user_id=uuid4(), tenant_id=tenant_id, role=TenantRole.Owner, is_super_admin=False)
+    admin = Principal(user_id=uuid4(), tenant_id=tenant_id, role=TenantRole.Admin, is_super_admin=False)
+    operator = Principal(user_id=uuid4(), tenant_id=tenant_id, role=TenantRole.Operator, is_super_admin=False)
+    super_admin = Principal(user_id=uuid4(), tenant_id=None, role=None, is_super_admin=True)
     assert require_role(TenantRole.Owner)(owner) is owner
     assert require_role(TenantRole.Owner, TenantRole.Admin)(admin) is admin
     with pytest.raises(HTTPException) as denied:
