@@ -12,6 +12,24 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-22.04
+    env:
+      OPENSMS_SAAS_ENABLED: "0"
+      OPENSMS_SAAS_DATABASE_URL: postgresql+psycopg://opensms:opensms-ci-password@127.0.0.1:5432/opensms_test
+      OPENSMS_SAAS_SESSION_SECRET: ci-session-secret-0123456789abcdef0123456789abcdef
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: opensms_test
+          POSTGRES_USER: opensms
+          POSTGRES_PASSWORD: opensms-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opensms -d opensms_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,9 +46,13 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pip install -r app/requirements.txt
           python -m pip install -r gateway/requirements.txt
+      - name: Validate PostgreSQL migration
+        run: alembic -c gateway/opensms_gateway/saas/migrations/alembic.ini upgrade head
       - name: Run tests
         run: python -m pytest tests -q
       - name: Compile Python sources
-        run: python -m py_compile app/main.py app/services/*.py app/screens/settings.py gateway/opensms_gateway/*.py gateway/run.py
+        run: |
+          python -m py_compile app/main.py app/services/*.py app/screens/settings.py gateway/run.py
+          python -m compileall -q gateway/opensms_gateway
       - name: Whitespace check
         run: git diff --check HEAD^ HEAD || git diff --check
