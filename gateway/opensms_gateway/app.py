@@ -10,6 +10,9 @@ from .registry import ConnectionRegistry
 from .rate_limit import SlidingWindowRateLimiter
 from .security import new_secret
 from .storage import GatewayStore
+from .saas.config import SaaSSettings
+from .saas.db import create_engine_from_settings, database_ready, session_factory
+from .saas.routes import build_saas_router
 
 
 SAFE_DEVICE_ERRORS = {
@@ -51,6 +54,14 @@ def create_app(settings: Optional[GatewaySettings] = None, store: Optional[Gatew
     app.state.store = store
     app.state.registry = registry
 
+    saas_settings = SaaSSettings.from_env()
+    app.state.saas_settings = saas_settings
+    app.state.saas_engine = None
+    if saas_settings.enabled:
+        saas_engine = create_engine_from_settings(saas_settings)
+        app.state.saas_engine = saas_engine
+        app.include_router(build_saas_router(session_factory(saas_engine), store))
+
     def require_admin(authorization: Optional[str] = Header(default=None)) -> None:
         token = _bearer_value(authorization)
         if token is None:
@@ -73,6 +84,8 @@ def create_app(settings: Optional[GatewaySettings] = None, store: Optional[Gatew
     def readyz():
         if not store.ready():
             raise HTTPException(status_code=503, detail="storage unavailable")
+        if app.state.saas_engine is not None and not database_ready(app.state.saas_engine):
+            raise HTTPException(status_code=503, detail="saas storage unavailable")
         return {"status": "ready"}
 
     @app.post("/api/v1/pairing-codes", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
