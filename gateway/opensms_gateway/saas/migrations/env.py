@@ -1,10 +1,20 @@
 import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from gateway.opensms_gateway.saas.models import Base
+_here = Path(__file__).resolve()
+for parent in _here.parents:
+    if str(parent) not in sys.path:
+        sys.path.insert(0, str(parent))
+
+try:
+    from gateway.opensms_gateway.saas.models import Base
+except ModuleNotFoundError:
+    from opensms_gateway.saas.models import Base
 
 config = context.config
 if config.config_file_name is not None:
