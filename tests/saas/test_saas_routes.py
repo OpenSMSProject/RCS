@@ -88,7 +88,8 @@ def test_state_changes_require_csrf_and_api_key_raw_value_is_one_time():
     assert body["api_key"].startswith("osms_live_")
     listed = client.get("/saas/v1/api-keys")
     assert listed.status_code == 200
-    assert "api_key" not in listed.text and body["api_key"] not in listed.text
+    assert body["api_key"] not in listed.text
+    assert all("api_key" not in item for item in listed.json()["api_keys"])
 
 
 def test_device_claim_uses_legacy_gateway_without_mutating_it():
