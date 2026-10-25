@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.abspath("gateway"))
 
 from opensms_gateway.saas.auth import Principal
 from opensms_gateway.saas.models import (
-    Base, DocumentType, EmailVerificationToken, Membership, Tenant, TenantRole,
-    TenantStatus, TenantType, Trial, User,
+    Base, DocumentType, EmailVerificationToken, Membership, Tenant, TenantEntitlement,
+    TenantRole, TenantStatus, TenantType, Trial, User,
 )
 from opensms_gateway.saas.tenants import change_member_role, invite_member, normalize_document, provision_trial_tenant
 
@@ -76,6 +76,19 @@ def test_provision_pj_maps_to_cnpj_and_rejects_duplicate_document_or_email():
     assert session.scalar(select(Tenant).where(Tenant.document_number == "12345678000199")).id == first.id
 
 
+def test_trial_user_limit_is_enforced_when_inviting_members():
+    session = db()
+    tenant = provision_trial_tenant(
+        session, email="owner@example.com", password="password-123",
+        tenant_type=TenantType.PF, document_number="12345678901", display_name="PF",
+    )
+    owner_membership = session.scalar(select(Membership).where(Membership.tenant_id == tenant.id))
+    owner = Principal(user_id=owner_membership.user_id, tenant_id=tenant.id, role=TenantRole.Owner, is_super_admin=False)
+    invite_member(session, tenant_id=tenant.id, actor=owner, email="second@example.com", role=TenantRole.Admin)
+    with pytest.raises(PermissionError, match="user limit"):
+        invite_member(session, tenant_id=tenant.id, actor=owner, email="third@example.com", role=TenantRole.Operator)
+
+
 def test_membership_permissions_prevent_owner_escalation_and_last_owner_demotion():
     session = db()
     tenant = provision_trial_tenant(
@@ -86,6 +99,8 @@ def test_membership_permissions_prevent_owner_escalation_and_last_owner_demotion
     owner = Principal(user_id=owner_membership.user_id, tenant_id=tenant.id, role=TenantRole.Owner, is_super_admin=False)
     admin_membership = invite_member(session, tenant_id=tenant.id, actor=owner, email="admin@example.com", role=TenantRole.Admin)
     admin = Principal(user_id=admin_membership.user_id, tenant_id=tenant.id, role=TenantRole.Admin, is_super_admin=False)
+    session.add(TenantEntitlement(tenant_id=tenant.id, plan_id=None, courtesy_overrides={"users": 3}))
+    session.commit()
     operator_membership = invite_member(session, tenant_id=tenant.id, actor=admin, email="operator@example.com", role=TenantRole.Operator)
     operator = Principal(user_id=operator_membership.user_id, tenant_id=tenant.id, role=TenantRole.Operator, is_super_admin=False)
     assert operator_membership.role == TenantRole.Operator

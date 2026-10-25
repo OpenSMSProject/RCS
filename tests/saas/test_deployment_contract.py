@@ -6,6 +6,7 @@ COMPOSE = ROOT / "gateway" / "docker-compose.yml"
 DOCKERFILE = ROOT / "gateway" / "Dockerfile"
 START = ROOT / "gateway" / "start.sh"
 INSTALL = ROOT / "install.sh"
+ENV_EXAMPLE = ROOT / "gateway" / ".env.example"
 
 
 def text(path: Path) -> str:
@@ -61,6 +62,18 @@ def test_installer_enables_saas_and_appends_missing_secrets_idempotently():
     assert "Preserving existing gateway credentials" in script
     assert "SAAS_STATUS=ENABLED" in script
     assert "SAAS_DATABASE=POSTGRESQL" in script
+
+
+def test_env_example_documents_all_saas_runtime_variables():
+    env = text(ENV_EXAMPLE)
+    for token in (
+        "OPENSMS_SAAS_ENABLED",
+        "OPENSMS_SAAS_DATABASE_URL",
+        "OPENSMS_SAAS_SESSION_SECRET",
+        "OPENSMS_POSTGRES_PASSWORD",
+        "OPENSMS_SAAS_SECURE_COOKIES",
+    ):
+        assert f"{token}=" in env
 
 
 def test_installer_never_prints_generated_saas_secrets():

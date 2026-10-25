@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath("gateway"))
 
 from opensms_gateway.saas.api_keys import authenticate_api_key, create_api_key, revoke_api_key
 from opensms_gateway.saas.auth import Principal
-from opensms_gateway.saas.models import ApiKey, AuditEvent, Base, Membership, TenantRole, TenantType
+from opensms_gateway.saas.models import ApiKey, AuditEvent, Base, Membership, TenantRole, TenantType, Trial
 from opensms_gateway.saas.tenants import invite_member, provision_trial_tenant
 
 
@@ -69,6 +69,17 @@ def test_authentication_returns_least_privilege_principal_and_updates_last_used(
     with pytest.raises(HTTPException) as bad:
         authenticate_api_key(session, raw + "x")
     assert bad.value.status_code == 401
+
+
+def test_api_key_authentication_respects_external_api_entitlement():
+    session = db(); tenant, owner = tenant_with_owner(session, email="one@example.com", document="12345678901")
+    _, raw = create_api_key(session, tenant_id=tenant.id, actor=owner, label="API")
+    trial = session.scalar(select(Trial).where(Trial.tenant_id == tenant.id))
+    trial.expires_at = datetime.now(timezone.utc)
+    session.commit()
+    with pytest.raises(HTTPException) as denied:
+        authenticate_api_key(session, raw)
+    assert denied.value.status_code == 403
 
 
 def test_revoked_key_fails_authentication_and_revocation_is_audited():
