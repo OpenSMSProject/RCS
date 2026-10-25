@@ -23,6 +23,26 @@ The one-command installer generates missing PostgreSQL/session secrets without p
 
 When SaaS is disabled, `/saas/v1/...` is not mounted and the existing gateway behavior remains available.
 
+### First upgrade from the pre-SaaS gateway
+
+An installation created before Phase 1 has an older `/usr/local/bin/rcs`. That old `rcs update` command does not know how to generate the new PostgreSQL/session settings or run the initial SaaS migration.
+
+Therefore, the **first** upgrade of an existing pre-SaaS installation must re-run the current one-command installer:
+
+```bash
+rm -rf /tmp/opensms-rcs-installer && git clone --depth 1 --branch feature/remote-connector-v1 https://github.com/OpenSMSProject/RCS.git /tmp/opensms-rcs-installer && bash /tmp/opensms-rcs-installer/install.sh
+```
+
+The installer preserves the existing `.env` and SQLite data, adds only missing SaaS settings, installs the current `rcs` management command, starts PostgreSQL, applies Alembic migrations, rebuilds the gateway, and requires health/readiness to pass.
+
+After that first transition, normal updates use:
+
+```bash
+rcs update
+```
+
+Do **not** use the pre-SaaS `rcs update` as the first Phase 1 rollout step.
+
 ## Persistence
 
 - Existing gateway/device/message state: SQLite at the existing `OPENSMS_DB_PATH`.
@@ -31,7 +51,7 @@ When SaaS is disabled, `/saas/v1/...` is not mounted and the existing gateway be
 - PostgreSQL persistent volume: `opensms-postgres-data`.
 - PostgreSQL is not published on a host port by the production Compose file.
 
-The installer and `rcs update` run the Alembic migration before the gateway is considered ready. A failed migration stops the update; it does not delete either SQLite or PostgreSQL data.
+The installer and the Phase-1-aware `rcs update` run the Alembic migration before the gateway is considered ready. A failed migration stops the update; it does not delete either SQLite or PostgreSQL data.
 
 ## Tenant model
 
@@ -134,6 +154,8 @@ Existing `/api/v1/...`, `/healthz`, `/readyz` and `/api/v1/device/connect` contr
 `GET /readyz` continues to validate SQLite. When SaaS is enabled, it also validates PostgreSQL. A PostgreSQL outage therefore causes readiness failure without deleting or rewriting the legacy SQLite database.
 
 ## Operations
+
+After the first Phase 1 transition has installed the new management command:
 
 ```bash
 rcs status
