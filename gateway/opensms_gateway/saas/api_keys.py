@@ -76,6 +76,14 @@ def authenticate_api_key(session: Session, raw_key: str) -> Principal:
     tenant = session.get(Tenant, record.tenant_id)
     if tenant is None or tenant.status != TenantStatus.active:
         raise HTTPException(status_code=403, detail="tenant unavailable")
+    decision = evaluate_entitlement(
+        session,
+        tenant_id=record.tenant_id,
+        capability="external_api",
+        now=datetime.now(timezone.utc),
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail="external API unavailable")
     record.last_used_at = datetime.now(timezone.utc)
     session.commit()
     return Principal(

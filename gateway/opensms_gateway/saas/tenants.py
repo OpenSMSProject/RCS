@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import Principal
+from .entitlements import evaluate_entitlement
 from .models import (
     DocumentType,
     EmailVerificationToken,
@@ -132,6 +133,24 @@ def invite_member(
         raise PermissionError("Admin cannot grant Owner")
     normalized_email = _normalized_email(email)
     user = session.scalar(select(User).where(func.lower(User.email) == normalized_email))
+    if user is not None:
+        existing = session.scalar(
+            select(Membership).where(Membership.tenant_id == tenant_id, Membership.user_id == user.id)
+        )
+        if existing is not None:
+            raise ValueError("user is already a tenant member")
+
+    decision = evaluate_entitlement(
+        session,
+        tenant_id=tenant_id,
+        capability="users",
+        now=datetime.now(timezone.utc),
+    )
+    if not decision.allowed:
+        if decision.reason == "limit_reached":
+            raise PermissionError("user limit reached")
+        raise PermissionError(f"user invitation denied: {decision.reason}")
+
     if user is None:
         user = User(
             email=normalized_email,
@@ -141,11 +160,6 @@ def invite_member(
         )
         session.add(user)
         session.flush()
-    existing = session.scalar(
-        select(Membership).where(Membership.tenant_id == tenant_id, Membership.user_id == user.id)
-    )
-    if existing is not None:
-        raise ValueError("user is already a tenant member")
     membership = Membership(tenant_id=tenant_id, user_id=user.id, role=role)
     session.add(membership)
     session.commit()
